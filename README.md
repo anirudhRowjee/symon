@@ -13,3 +13,4 @@ TODO
 ## Team
 
 - Anirudh Rowjee
+- Ananya Jandhyala
