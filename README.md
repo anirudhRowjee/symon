@@ -13,3 +13,7 @@ TODO
 ## Team
 
 - Anirudh Rowjee
+- Ananya Jandhyala
+- Aadithya Krishna Vamshi V
+- Anshu Sandur
+
