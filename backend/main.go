@@ -1,12 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
-	"log"
+	"net/http"
 	"sync"
 	"time"
 
-	"github.com/shirou/gopsutil/v3/cpu"
+	"github.com/shirou/gopsutil/cpu"
 	"github.com/shirou/gopsutil/v3/mem"
 )
 
@@ -45,7 +46,15 @@ type CpuMetrics struct {
 }
 
 func (c *CpuMetrics) new() {
-	// Populate new CPU Metrics
+	// Populate new Memory Metrics
+	cpuStatStruct, _ := cpu.Info()
+	cpunum, _ := cpu.Counts(false)
+	cpucores := len(cpuStatStruct)
+	cpu_usage_percentage, _ := cpu.Percent(0, true)
+
+	c.CPU_cores = cpucores
+	c.CPU_counts = cpunum
+	c.CPU_usage_percentage = cpu_usage_percentage
 }
 
 type MemoryMetrics struct {
@@ -85,37 +94,115 @@ func (s *systemMetrics) update(cpu CpuMetrics, memory MemoryMetrics) {
 
 // Container Struct for Metrics with Timestamp
 type MetricsDashboard struct {
-	mu              sync.Mutex
-	current_metrics systemMetrics
+	mutex                 sync.Mutex // Concurrency Control
+	waitgroup             sync.WaitGroup
+	latest_system_metrics systemMetrics // State
+	cpu_metrics_chan      chan CpuMetrics
+	memory_metrics_chan   chan MemoryMetrics
+	shutdown_chan         chan int
+	tick_rate             time.Duration
+}
+
+func (m *MetricsDashboard) init(sleep time.Duration) {
+	m.mutex = sync.Mutex{}
+	m.waitgroup = sync.WaitGroup{}
+	m.latest_system_metrics = systemMetrics{}
+	m.cpu_metrics_chan = make(chan CpuMetrics)
+	m.memory_metrics_chan = make(chan MemoryMetrics)
+	m.shutdown_chan = make(chan int)
+	m.tick_rate = sleep
 }
 
 func (m *MetricsDashboard) spawn_state_manager() {
 	// function to spawn the state manager goroutine
+	// Run this infinite loop
+	for {
+		select {
+		case latest_cpu_metrics_copy := <-m.cpu_metrics_chan:
+			// update CPU metrics
+			m.mutex.Lock()
+			m.latest_system_metrics.Current_CPU_Metrics = latest_cpu_metrics_copy
+			m.mutex.Unlock()
+		case latest_memory_metrics_copy := <-m.memory_metrics_chan:
+			// update Memory metrics
+			m.mutex.Lock()
+			m.latest_system_metrics.Current_Memory_Metrics = latest_memory_metrics_copy
+			m.mutex.Unlock()
+			// TODO Implement with errorgroup context https://www.fullstory.com/blog/why-errgroup-withcontext-in-golang-server-handlers/
+		}
+	}
 }
 
 func (m *MetricsDashboard) serve_metrics() {
-	// function to spawn the state manager goroutine
+	// function to spawn the Metrics server
+	mux := http.NewServeMux()
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+
+		// read the metric
+		m.mutex.Lock()
+		response := m.latest_system_metrics
+		m.mutex.Unlock()
+
+		// serialize
+		w.Header().Set("Content-Type", "application/json")
+		json_output, err := json.Marshal(response)
+		if err != nil {
+			w.Write([]byte("Could not marshal"))
+		}
+		w.Write(json_output)
+	})
+	http.ListenAndServe("127.0.0.1:1337", mux)
 }
 
 func (m *MetricsDashboard) spawn_fetchloops() {
 	// function to spawn the state manager goroutine
+
+	// Memory fetch loop
+	go func() {
+		for {
+
+			// Load Metrics at this time
+			metrics := MemoryMetrics{}
+			metrics.new()
+
+			// send this into the channel
+			m.memory_metrics_chan <- metrics
+
+			// Sleep
+			time.Sleep(m.tick_rate)
+		}
+	}()
+
+	// CPU fetch loop
+	go func() {
+		for {
+
+			// Load Metrics at this time
+			metrics := CpuMetrics{}
+			metrics.new()
+
+			// send this into the channel
+			m.cpu_metrics_chan <- metrics
+
+			// Sleep
+			time.Sleep(m.tick_rate)
+		}
+	}()
 }
 
 // Function to start the entire infrastructure
-func (m *MetricsDashboard) start(tick_rate int) {
+func (m *MetricsDashboard) start() {
 	// TODO Graceful shutdown
 	// TODO Maybe use a waitgroup
-
-	// spawn comms channels
 
 	// spawn state manager goroutine
 	go m.spawn_state_manager()
 
 	// spawn metric fetch loop goroutines
-	go m.spawn_fetchloops()
+	m.spawn_fetchloops()
 
 	// spawn server goroutines
-	go m.serve_metrics()
+	m.serve_metrics()
 
 }
 
@@ -123,23 +210,8 @@ func main() {
 
 	fmt.Print(BANNER)
 
-	// TODO Declare shared state
+	m := MetricsDashboard{}
+	m.init(TICK_RATE)
 
-	// TODO Make shared state accessible via a weeb server
-
-	// TODO Send this off in a goroutine
-	for {
-
-		time.Sleep(time.Millisecond * 500)
-
-		c, _ := cpu.Counts(false)
-		cpu_usage_percentage, _ := cpu.Percent(0, true)
-
-		log.Println("Usage Statistics =>")
-		fmt.Printf("Memory Usage -> %f%%\n", v.UsedPercent)
-		fmt.Printf("CPU Count -> %d\n", c)
-		fmt.Println("CPU Usage -> ", cpu_usage_percentage)
-
-	}
-
+	m.start()
 }
