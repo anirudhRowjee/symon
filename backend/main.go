@@ -151,6 +151,8 @@ func (m *MetricsDashboard) serve_metrics() {
 		log.Println("[HANDLER] Acquiring Lock")
 		m.mutex.Lock()
 		response := m.latest_system_metrics
+		// TODO populate the timestamp field in latest_system_metrics
+		response.Current_timestamp = time.Now().Format("2006.01.02 15:04:05")
 		m.mutex.Unlock()
 		log.Println("[HANDLER] Releasing Lock")
 		log.Println("[HANDLER] Latest Metrics Acquired -> ", response)
