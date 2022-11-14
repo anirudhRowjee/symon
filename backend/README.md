@@ -58,7 +58,7 @@ Here's a sample (but schematically accurate) response -
 
 ```json
 {
-  "metrics_timestamp": "",
+  "metrics_timestamp": "2006.01.02 15:04:05",
   "cpu_metrics": {
     "cpu_count": 4,
     "cpu_cores": 8,
